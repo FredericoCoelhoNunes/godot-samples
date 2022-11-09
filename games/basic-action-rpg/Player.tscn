@@ -12,7 +12,7 @@
 
 [sub_resource type="ShaderMaterial" id=52]
 shader = ExtResource( 9 )
-shader_param/active = true
+shader_param/active = false
 
 [sub_resource type="CapsuleShape2D" id=1]
 radius = 3.981
@@ -739,10 +739,35 @@ height = 6.0
 [sub_resource type="Animation" id=53]
 resource_name = "Start"
 length = 0.2
+loop = true
+tracks/0/type = "value"
+tracks/0/path = NodePath("Sprite:material:shader_param/active")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0, 0.1 ),
+"transitions": PoolRealArray( 1, 1 ),
+"update": 1,
+"values": [ true, false ]
+}
 
 [sub_resource type="Animation" id=54]
 resource_name = "Stop"
 length = 0.1
+tracks/0/type = "value"
+tracks/0/path = NodePath("Sprite:material:shader_param/active")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/keys = {
+"times": PoolRealArray( 0 ),
+"transitions": PoolRealArray( 1 ),
+"update": 1,
+"values": [ false ]
+}
 
 [node name="Player" type="KinematicBody2D"]
 collision_layer = 2
@@ -824,6 +849,8 @@ anims/Start = SubResource( 53 )
 anims/Stop = SubResource( 54 )
 
 [connection signal="area_entered" from="Hurtbox" to="." method="_on_Hurtbox_area_entered"]
+[connection signal="invincibility_ended" from="Hurtbox" to="." method="_on_Hurtbox_invincibility_ended"]
+[connection signal="invincibility_started" from="Hurtbox" to="." method="_on_Hurtbox_invincibility_started"]
 
 [editable path="HitboxPivot/SwordHitbox"]
 [editable path="Hurtbox"]
