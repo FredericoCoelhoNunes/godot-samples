@@ -1,0 +1,482 @@
+extends Control
+
+onready var world = get_tree().current_scene
+onready var labels_ui = $LabelsUI
+onready var canvas = $CanvasLayer
+
+var Iscene = preload("res://RoadBuilder/I.tscn")
+
+var hex_to_pos = {} setget set_hexes
+var pos_to_hex = {}
+var _hex_list
+var adjacent_hexes = {} 
+
+var start_hex
+var target_hex setget set_target_hex
+
+var MOVE_RIGHT = {
+	"grid": Vector2(96, 0),
+	"hex": Vector3(1, 0, -1)
+}
+var MOVE_TOP_RIGHT = {
+	"grid": Vector2(48, -72),
+	"hex": Vector3(0, 1, -1)
+}
+var MOVE_BOTTOM_RIGHT = {
+	"grid": Vector2(48, 72),
+	"hex": Vector3(1, -1, 0)
+}
+var MOVE_LEFT = {
+	"grid": Vector2(-96, 0),
+	"hex": Vector3(-1, 0, 1)
+}
+var MOVE_TOP_LEFT = {
+	"grid": Vector2(-48, -72),
+	"hex": Vector3(-1, 1, -0)
+}
+var MOVE_BOTTOM_LEFT = {
+	"grid": Vector2(-48, 72),
+	"hex": Vector3(0, -1, 1)
+}
+var DIRECTIONS = [MOVE_RIGHT, MOVE_TOP_RIGHT, MOVE_BOTTOM_RIGHT, MOVE_LEFT, MOVE_TOP_LEFT, MOVE_BOTTOM_LEFT]
+
+# variables for pathfinding
+var start_position : Vector3
+var end_position : Vector3
+
+
+func set_label(pos, msg):
+	var label = Label.new()
+	label.set_position(Vector2(pos.x - 20, pos.y - 10))
+	label.text = str(msg)
+	labels_ui.add_child(label)
+
+
+func set_hexes(hex_list):
+	# Sets the coordinates for each hex
+	# according to https://blog.theknightsofunity.com/pathfinding-on-a-hexagonal-grid-a-algorithm/
+	
+	# Find bottom left hex (root)
+	var min_x
+	var max_x
+	var min_y
+	var max_y
+# warning-ignore:unused_variable
+	var origin_hex
+	
+	_hex_list = hex_list.get_children()
+	
+	for hex in _hex_list:
+		if not min_x or hex.global_position.x <= min_x:
+			min_x = hex.global_position.x
+			if not max_y or hex.global_position.y >= max_y:
+				max_y = hex.global_position.y
+				origin_hex = hex
+		
+		if not max_x or hex.global_position.x > max_x:
+			max_x = hex.global_position.x
+		if not min_y or hex.global_position.y < min_y:
+			min_y = hex.global_position.y 
+	
+	# Recursively process all hexes
+	process_point(Vector2(min_x, max_y),  Vector3(0, 0, 0))
+
+func process_point(curr_pos, curr_hex_pos):
+	# Find corresponding hex
+	var curr_hex = null
+#	print(curr_pos, curr_hex_pos)
+	for i in range(_hex_list.size()):
+		var hex = _hex_list[i]
+		if hex.global_position.distance_to(curr_pos) < 5:
+#			print("found hex for this position " + str(hex))
+			curr_hex = hex
+			_hex_list.remove(i)
+#			set_label(curr_pos, str(curr_hex_pos))
+			hex_to_pos[hex] = curr_hex_pos
+			pos_to_hex[curr_hex_pos] = hex
+			break
+	
+	# If we didn't find a hex (or if it was already processed), break	
+	if not curr_hex:
+		return
+	
+	# Otherwise, recursively search in all directions
+	for DIRECTION in [MOVE_RIGHT, MOVE_TOP_RIGHT, MOVE_LEFT, MOVE_TOP_LEFT]:
+		process_point(curr_pos+DIRECTION["grid"], curr_hex_pos+DIRECTION["hex"])
+	
+	return
+
+func find_hex(pos):
+	# Search for a hex in the hex_to_pos dict
+	for hex in hex_to_pos:
+		if hex.global_position.distance_to(pos) < 35:
+			return hex
+			
+	return null
+
+func draw_symbol(pos):
+	var iscene = Iscene.instance()
+	iscene.global_position = pos
+	add_child(iscene)
+
+var preview_target
+
+func _input(event):
+	if event.is_action_pressed("build_road"):
+		world.road_build_mode_on = not world.road_build_mode_on
+		for hex in preview_roads:
+			hex.remove_road()
+		preview_roads.clear()
+	elif world.road_build_mode_on:
+		if event is InputEventMouseButton:
+			if event.button_index == BUTTON_LEFT and event.pressed:
+				var mousepos = get_global_mouse_position()
+				var hex = find_hex(mousepos)
+				if hex and not start_hex:
+					start_hex = hex
+#					draw_symbol(hex.global_position)
+				elif hex:
+					self.target_hex = hex
+	if event is InputEventMouseMotion:
+		var hex = find_hex(get_global_mouse_position())
+		if hex != preview_target:
+			on_hex_entered(hex)
+#					draw_symbol(hex.global_position
+
+
+func on_hex_entered(hex):
+	if world.road_build_mode_on:
+		preview_target = hex
+		if start_hex != null && preview_target != null && (start_hex != preview_target):
+			var solution = solve(start_hex, preview_target)
+			if solution:
+				draw_roads(solution,true)
+
+func set_target_hex(value):
+	target_hex = value
+	if (start_hex and target_hex) and (start_hex != target_hex):
+		var solution = solve(start_hex, target_hex)
+		if solution:
+			draw_roads(solution,false)
+
+	start_hex = null
+	target_hex = null
+
+func is_same_level(a, b):
+	return a.global_position.y == b.global_position.y
+
+func is_below(a, b):
+	return a.global_position.y > b.global_position.y
+	
+func is_above(a, b):
+	return a.global_position.y < b.global_position.y
+
+func is_left(a, b):
+	return a.global_position.x < b.global_position.x
+
+func is_right(a, b):
+	return a.global_position.x > b.global_position.x
+
+var preview_roads : Array
+
+func draw_roads(hexes,preview):
+	if hexes.size() >= 3:
+		for hex in preview_roads:
+			hex.remove_road()
+		preview_roads.clear()
+		for i in range(hexes.size()):
+			var curr_hex = hexes[i]
+			var next_hex
+			var prev_hex
+			if i < hexes.size() - 1:
+				next_hex = hexes[i+1]
+			else:
+				next_hex = false
+				
+			if i > 0:
+				prev_hex = hexes[i-1]
+			else:
+				prev_hex = false
+			
+			var curr_road
+			
+			# If it's the first hex
+			if not prev_hex:
+				# If tiles are at the same level
+				if is_same_level(next_hex, curr_hex):
+					curr_road = "left_to_right"
+				# If the next hex is to the right...
+				elif is_right(next_hex, curr_hex):
+					# ...and above
+					if is_above(next_hex, curr_hex):
+						curr_road = "left_to_top-right"  # then we go left to top right
+					# ...and below
+					elif is_below(next_hex, curr_hex):
+						curr_road = "left_to_bottom-right"  # then we go left to bottom right
+						
+				# If the next hex is to the left...
+				elif is_left(next_hex, curr_hex):
+					# ...and above
+					if is_above(next_hex, curr_hex):
+						curr_road = "right_to_top-left"  # then we go right to top left
+					# ...and below
+					elif is_below(next_hex, curr_hex):
+						curr_road = "right_to_bottom-left"  # then we go right to bottom left
+						
+			# If it's the last hex
+			elif not next_hex:
+				# If tiles are at the same level
+				if is_same_level(prev_hex, curr_hex):
+					curr_road = "left_to_right"
+				# If the previous hex is to the right...
+				elif is_right(prev_hex, curr_hex):
+					# ...and above
+					if is_above(prev_hex, curr_hex):
+						curr_road = "left_to_top-right"  # then we go left to top right
+					# ...and below
+					elif is_below(prev_hex, curr_hex):
+						curr_road = "left_to_bottom-right"  # then we go left to bottom right
+						
+				# If the previous hex is to the left...
+				elif is_left(prev_hex, curr_hex):
+					# ...and above
+					if is_above(prev_hex, curr_hex):
+						curr_road = "right_to_top-left"  # then we go right to top left
+					# ...and below
+					elif is_below(prev_hex, curr_hex):
+						curr_road = "right_to_bottom-left"  # then we go right to bottom left
+		
+			# If we have a prev and a next hex
+			else:
+				# If the hexes are all in line:
+				if is_same_level(prev_hex, curr_hex) and is_same_level(curr_hex, next_hex):
+					curr_road = "left_to_right"
+				# If the next hex is above, and the previous hex is below
+				elif is_above(next_hex, curr_hex) and is_below(prev_hex, curr_hex):
+					# If the current hex is to the left of both tiles
+					if is_left(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-right_to_top-right"
+					# If the current hex is to the right of both tiles
+					elif is_right(curr_hex, next_hex) and is_right(curr_hex, prev_hex):
+						curr_road = "bottom-left_to_top-left"
+					# If the current hex is to the right of next, and to the left of prev
+					elif is_right(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-right_to_top-left"
+					# If the current hex is to the left of next, and to the right of prev
+					elif is_left(curr_hex, next_hex) and is_right(curr_hex, prev_hex):
+						curr_road = "bottom-left_to_top-right"
+						
+				# If the next hex is below, and the previous hex is above
+				elif is_below(next_hex, curr_hex) and is_above(prev_hex, curr_hex):
+					# If the current hex is to the left of both tiles
+					if is_left(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-right_to_top-right"
+					# If the current hex is to the right of both tiles
+					elif is_right(curr_hex, next_hex) and is_right(curr_hex, prev_hex):
+						curr_road = "bottom-left_to_top-left"
+					# If the current hex is to the right of next, and to the left of prev
+					elif is_right(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-left_to_top-right"
+					# If the current hex is to the left of next, and to the right of prev
+					elif is_left(curr_hex, next_hex) and is_right(curr_hex, prev_hex):
+						curr_road = "bottom-right_to_top-left"
+						
+				# If the next hex is same level, and the previous hex is above
+				elif is_below(next_hex, curr_hex) and is_above(prev_hex, curr_hex):
+					# If the current hex is to the left of both tiles
+					if is_left(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-right_to_top-right"
+					# If the current hex is to the right of both tiles
+					elif is_right(curr_hex, next_hex) and is_right(curr_hex, prev_hex):
+						curr_road = "bottom-left_to_top-left"
+					# If the current hex is to the right of next, and to the left of prev
+					elif is_right(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-left_to_top-right"
+					# If the current hex is to the left of next, and to the right of prev
+					elif is_right(curr_hex, next_hex) and is_left(curr_hex, prev_hex):
+						curr_road = "bottom-right_to_top-left"
+						
+				# If the prev hex is at the same level as curr
+				elif is_same_level(prev_hex, curr_hex):
+					# If it's to the right...
+					if is_right(prev_hex, curr_hex):
+						# ...and next is up
+						if is_above(next_hex, curr_hex):
+							curr_road = "right_to_top-left"
+						# ...and next is down
+						elif is_below(next_hex, curr_hex):
+							curr_road = "right_to_bottom-left"
+					elif is_left(prev_hex, curr_hex):
+						# ...and next is up
+						if is_above(next_hex, curr_hex):
+							curr_road = "left_to_top-right"
+						# ...and next is down
+						elif is_below(next_hex, curr_hex):
+							curr_road = "left_to_bottom-right"
+				
+				# If the next hex is at the same level as curr
+				elif is_same_level(next_hex, curr_hex):
+					# If it's to the right...
+					if is_right(next_hex, curr_hex):
+						# ...and prev is up
+						if is_above(prev_hex, curr_hex):
+							curr_road = "right_to_top-left"
+						# ...and prev is down
+						elif is_below(prev_hex, curr_hex):
+							curr_road = "right_to_bottom-left"
+					elif is_left(next_hex, curr_hex):
+						# ...and prev is up
+						if is_above(prev_hex, curr_hex):
+							curr_road = "left_to_top-right"
+						# ...and prev is down
+						elif is_below(prev_hex, curr_hex):
+							curr_road = "left_to_bottom-right"
+			
+			# fail case (need to debug!)
+			if not curr_road:
+				curr_road = "left_to_right"
+			
+			if i < hexes.size() - 1 and i > 0:
+				curr_hex.set_road("res://Assets/roads/"+curr_road+'.png',preview)
+				if preview:
+					preview_roads.append(curr_hex)
+
+func calc_H(curr_node, target):
+	return [
+		abs(hex_to_pos[curr_node].x - hex_to_pos[target].x), 
+		abs(hex_to_pos[curr_node].y - hex_to_pos[target].y),
+		abs(hex_to_pos[curr_node].z - hex_to_pos[target].z)
+	].max()
+
+func solve(start, target):
+	adjacent_hexes = {}
+	var curr_G = 0
+	var vals = {}
+	var open = []
+	var closed = []
+	var curr_hex = start
+	
+	open.append(curr_hex)
+	vals[curr_hex] = {}
+	vals[curr_hex]["G"] = curr_G
+	vals[curr_hex]["H"] = calc_H(curr_hex, target)
+	vals[curr_hex]["F"] = vals[curr_hex]["G"] + vals[curr_hex]["H"]
+
+	var success = false
+	var limit = 0
+	while open.size() > 0:
+		# limiting to 1000 iterations
+		limit += 1
+		if limit > 1000:
+			break
+		if target in open:
+			open.erase(target)
+			closed.append(target)
+			get_valid_adjacent_hexes(target, start, target)
+			success = true
+			break
+		
+		closed.append(curr_hex)
+		open.erase(curr_hex)
+		
+		var valid_adjacent_hexes = get_valid_adjacent_hexes(curr_hex, start, target)
+		for hex in valid_adjacent_hexes:
+			if not (hex in vals):
+				vals[hex] = {}
+				
+			if not (hex in closed) and not (hex in open):
+				open.append(hex)
+				if not ("G" in vals[hex]):
+					vals[hex]["G"] = vals[curr_hex]["G"] + 1
+				if not ("H" in vals[hex]):
+					vals[hex]["H"] = calc_H(hex, target)
+				if not ("F" in vals[hex]):
+					vals[hex]["F"] = vals[hex]["G"] + vals[hex]["H"]
+				
+				# Debug
+#				set_label(
+#					hex.global_position,
+#					"%s, %s, %s." % [str(vals[hex]["F"]), str(vals[hex]["G"]), str(vals[hex]["H"])]
+#				)
+		
+		curr_hex = get_next_hex(open, vals)
+#		draw_symbol(curr_hex.global_position)
+#		print("Current node: ", hex_to_pos[curr_hex])
+#		print("Adjacent hexes: ", valid_adjacent_hexes)
+#		print("Open: ", open)
+#		print("Closed: ", closed)
+#		yield(get_tree().create_timer(0.1), "timeout")
+	
+	if not success:
+		return false
+	
+	# If it found the target, now we need to reverse the steps and find the shortest path
+	var shortest_path = get_shortest_path(start, target, closed, vals)
+	
+	return shortest_path
+
+#	for hex in shortest_path:
+#		draw_symbol(hex.global_position)
+
+func get_shortest_path(start, target, closed, vals):
+	var shortest_path = [target]
+	var curr_hex = target
+
+#	print("got here")
+	while true:
+		var curr_min_G
+		var next_hex
+		
+		if start in adjacent_hexes[curr_hex]:
+			shortest_path.append(start)
+			break
+			
+		for hex in adjacent_hexes[curr_hex]:
+			if hex in closed:
+				if not curr_min_G or vals[hex]["G"] < curr_min_G:
+					curr_min_G = vals[hex]["G"]
+					next_hex = hex
+		
+		curr_hex = next_hex
+		shortest_path.append(curr_hex)
+	
+#	print("found path")
+	return shortest_path
+		
+
+func get_next_hex(open, vals):
+	var next_hexes = []
+	var min_F
+	for hex in open:
+		if (not min_F) or (vals[hex]["F"] < min_F):
+			next_hexes = [hex]
+			min_F = vals[hex]["F"]
+		elif vals[hex]["F"] == min_F:
+			next_hexes.append(hex)
+	
+	if next_hexes.size() == 1:
+		return next_hexes[0]
+	
+	# taking the one with the highest G
+	var next_hex
+	var max_G
+	for hex in next_hexes:
+		if not max_G or vals[hex]["G"] > max_G:
+			next_hex = hex
+			max_G = vals[hex]["G"]
+	
+	return next_hex
+
+
+func get_valid_adjacent_hexes(hex_, start, target):
+	var adjacent_hexes_ = []
+	if hex_ in adjacent_hexes:
+		return adjacent_hexes[hex_]
+	else:
+		for DIRECTION in DIRECTIONS:
+			var hex = pos_to_hex.get(hex_to_pos[hex_] + DIRECTION["hex"])
+			if hex and (hex.building_type == hex.building.NONE or hex == target or hex == start):
+				adjacent_hexes_.append(hex)
+			adjacent_hexes[hex_] = adjacent_hexes_
+	
+	return adjacent_hexes_
